@@ -1,0 +1,149 @@
+version: '3.8'
+
+services:
+  # ============================================
+  # vLLM Service - Serves the DeepAnalyze-8B LLM Model
+  # ============================================
+  vllm:
+    image: facdbe/deepanalyze-env:latest
+    container_name: deepanalyze-vllm
+    
+    # GPU Configuration
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1  # Use 1 H100 GPU
+              capabilities: [gpu]
+    
+    # Port Mapping
+    ports:
+      - "8000:8000"  # vLLM OpenAI-compatible API
+    
+    # Volume Mounts
+    volumes:
+      - ./models:/models  # Mount models directory
+      - ./workspace:/workspace  # Mount workspace for file access
+    
+    # Environment Variables
+    environment:
+      - CUDA_VISIBLE_DEVICES=0  # Use first GPU
+      - VLLM_LOGGING_LEVEL=INFO
+    
+    # Startup Command
+    command: >
+      python3 -m vllm.entrypoints.openai.api_server
+      --model /models/DeepAnalyze-8B
+      --host 0.0.0.0
+      --port 8000
+      --gpu-memory-utilization 0.9
+      --max-model-len 32768
+      --trust-remote-code
+      --dtype auto
+      --enforce-eager
+    
+    # Restart Policy
+    restart: unless-stopped
+    
+    # Health Check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  # ============================================
+  # Backend API Service - FastAPI Server
+  # ============================================
+  backend:
+    image: facdbe/deepanalyze-env:latest
+    container_name: deepanalyze-backend
+    
+    # Wait for vLLM to be healthy
+    depends_on:
+      vllm:
+        condition: service_healthy
+    
+    # Port Mapping
+    ports:
+      - "8200:8200"  # Backend API
+      - "8100:8100"  # File server
+    
+    # Volume Mounts
+    volumes:
+      - ../demo:/app/demo  # Mount demo directory with backend.py
+      - ./workspace:/app/workspace  # Shared workspace
+    
+    # Working Directory
+    working_dir: /app/demo
+    
+    # Startup Command
+    command: python3 backend.py
+    
+    # Environment Variables
+    environment:
+      - PYTHONUNBUFFERED=1
+      - MPLBACKEND=Agg
+    
+    # Restart Policy
+    restart: unless-stopped
+    
+    # Health Check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8200/workspace/files?session_id=default"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============================================
+  # Frontend Service - Next.js Chat UI
+  # ============================================
+  frontend:
+    image: node:18-alpine
+    container_name: deepanalyze-frontend
+    
+    # Wait for backend to be healthy
+    depends_on:
+      backend:
+        condition: service_healthy
+    
+    # Port Mapping
+    ports:
+      - "4000:4000"  # Frontend web UI
+    
+    # Volume Mounts
+    volumes:
+      - ../demo/chat:/app  # Mount chat frontend
+      - /app/node_modules  # Prevent overwriting node_modules
+    
+    # Working Directory
+    working_dir: /app
+    
+    # Startup Command
+    command: sh -c "npm install && npm run dev -- -p 4000 --hostname 0.0.0.0"
+    
+    # Environment Variables
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_BACKEND_URL=http://localhost:8200
+      - NEXT_PUBLIC_FILE_SERVER_BASE=http://localhost:8100
+      - NEXT_PUBLIC_AI_API_URL=http://localhost:8000
+    
+    # Restart Policy
+    restart: unless-stopped
+
+# ============================================
+# Networks (Optional)
+# ============================================
+networks:
+  default:
+    name: deepanalyze-network
+
+# ============================================
+# Volumes (Optional - for persistent data)
+# ============================================
+volumes:
+  workspace_data:
+    driver: local
