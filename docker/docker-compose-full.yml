@@ -8,29 +8,29 @@ services:
     image: facdbe/deepanalyze-env:latest
     container_name: deepanalyze-vllm
     
-    # GPU Configuration
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1  # Use 1 H100 GPU
-              capabilities: [gpu]
+    # Environment Variables
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=MIG-f3c77f5e-30d7-5ee8-b28c-1ec2c86c24ca
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - VLLM_LOGGING_LEVEL=INFO
     
     # Port Mapping
     ports:
-      - "8000:8000"  # vLLM OpenAI-compatible API
+      - "5035:8000"  # vLLM OpenAI-compatible API
     
     # Volume Mounts
     volumes:
-      - ./models:/models  # Mount models directory
-      - ./workspace:/workspace  # Mount workspace for file access
+      - /home/max/models:/models  # Mount models directory (absolute path)
+      - /home/max/DeepAnalyze/DeepAnalyze/docker/workspace:/workspace  # Mount workspace for file access
     
-    # Environment Variables
-    environment:
-      - CUDA_VISIBLE_DEVICES=0  # Use first GPU
-      - VLLM_LOGGING_LEVEL=INFO
+    # Shared memory size for deep learning
+    shm_size: '32gb'
     
+    # Runtime
+    runtime: nvidia
+    
+    # Restart Policy
+    restart: always
     # Startup Command
     command: >
       python3 -m vllm.entrypoints.openai.api_server
@@ -42,9 +42,6 @@ services:
       --trust-remote-code
       --dtype auto
       --enforce-eager
-    
-    # Restart Policy
-    restart: unless-stopped
     
     # Health Check
     healthcheck:
@@ -73,13 +70,22 @@ services:
     
     # Volume Mounts
     volumes:
-      - ../demo:/app/demo  # Mount demo directory with backend.py
-      - ./workspace:/app/workspace  # Shared workspace
+      - /home/max/DeepAnalyze/DeepAnalyze/demo:/app/demo  # Mount demo directory with backend.py
+      - /home/max/DeepAnalyze/DeepAnalyze/docker/workspace:/app/demo/workspace  # Shared workspace (relative to working_dir)
     
     # Working Directory
     working_dir: /app/demo
     
     # Startup Command
+    # Note: Core backend dependencies (openai, httpx, fastapi, uvicorn, etc.) are already in the image
+    # Only PDF export requires additional packages (pandoc, texlive, pypandoc)
+    # Uncomment the lines below if you need PDF export functionality:
+    # command: >
+    #   sh -c "
+    #   apt-get update && apt-get install -y pandoc texlive-xetex texlive-fonts-recommended && 
+    #   pip3 install pypandoc &&
+    #   python3 backend.py
+    #   "
     command: python3 backend.py
     
     # Environment Variables
@@ -115,7 +121,7 @@ services:
     
     # Volume Mounts
     volumes:
-      - ../demo/chat:/app  # Mount chat frontend
+      - /home/max/DeepAnalyze/DeepAnalyze/demo/chat:/app  # Mount chat frontend
       - /app/node_modules  # Prevent overwriting node_modules
     
     # Working Directory
